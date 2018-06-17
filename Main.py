@@ -1,6 +1,6 @@
 from AAPI import *
 from ReinforcementLearningPack import QLearning, GetState, GetReward, CreateDataSet
-from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelectionSecondLevel, ActionSelectionFirstLevel
+from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection
 
 # Global Variables
 warmup = 1800
@@ -154,7 +154,7 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                 density = SecondLevelAgent.getMaxDensity(allSectionDensity)
                 currentState = SecondLevelAgent.getStateSuperHolon(density[0])
                 # Action selection second level
-                [currentAction, actionType] = ActionSelectionSecondLevel.actionSelectionSecondLevel(
+                [currentAction, actionType] = ActionSelection.actionSelectionSecondLevel(
                     secondLevelAgents[h].probabilityOfRandomAction[currentState],
                     secondLevelAgents[h].qTable[currentState], numberOfActionSecondLevel)
                 if secondLevelAgents[h].probabilityOfRandomAction[currentState] >= eGreedy and actionType == "random":
@@ -163,22 +163,29 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                 for key in holonsMap[h]:
                     if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
                         if density[1] in networkDetails[density[3]][0]:
-                            do_action(agents[key].id, timeSta, 19)
+                            phaseDuration = [53, 13, 13, 13]
                         elif density[1] in networkDetails[density[3]][1]:
-                            do_action(agents[key].id, timeSta, 20)
+                            phaseDuration = [13, 53, 13, 13]
                         elif density[1] in networkDetails[density[3]][2]:
-                            do_action(agents[key].id, timeSta, 21)
+                            phaseDuration = [13, 13, 53, 13]
                         else:
-                            do_action(agents[key].id, timeSta, 22)
+                            phaseDuration = [13, 13, 13, 53]
                     else:
-                        [agents[key].currentAction, actionType] = ActionSelectionFirstLevel.actionSelectionFirstLevel(
-                            numberOfAction, agents[key].probabilityOfRandomAction,
-                            agents[key].qTable[agents[key].currentState], key, density[1], density[2], density[3],
-                            currentAction, networkDetails)
+                        [agents[key].currentAction, phaseDuration,
+                         actionType] = ActionSelection.actionSelectionFirstLevel(numberOfAction, agents[
+                            key].probabilityOfRandomAction, agents[key].qTable[agents[key].currentState], key,
+                                                                                 density[1], density[2],
+                                                                                 density[3], currentAction,
+                                                                                 networkDetails)
                         if agents[key].probabilityOfRandomAction[
                             agents[key].currentState] >= eGreedy and actionType == "random":
                             agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
-                        do_action(agents[key].id, timeSta, agents[key].currentAction)
+                    # Set green time for each phase
+                    ECIChangeTimingPhase(agents[index].id, 1, phaseDuration[0], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 3, phaseDuration[1], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
+                # Get reward second level
                 [rewardSecondLevel, secondLevelAgents[h].oldDta] = getRewardSecondLevel(dta, secondLevelAgents[h].oldDta)
                 for key in holonsMap[h]:
                     if (secondLevelAgents[h].currentAction == 3 or secondLevelAgents[h].currentAction == 5) and (agents[key].id == density[3]):
