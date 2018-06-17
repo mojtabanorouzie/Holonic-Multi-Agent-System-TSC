@@ -1,6 +1,6 @@
 from AAPI import *
 from ReinforcementLearningPack import QLearning, GetState, ActionSelection, GetReward, CreateDataSet
-from SecondLevelearningRateL import CreateHolon, SecondLevelAgent
+from SecondLevelRL import CreateHolon, SecondLevelAgent
 
 # Global Variables
 warmup = 1800
@@ -114,8 +114,8 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
             AKIPrintString("holon [" + str(index) + "]  =  " + str(holonsMap[index]))
         # 4. Create second level agents
         secondLevelAgents.append(
-            SecondLevelAgent.SecondLevelearningRateLAgent(numberOfStateSecondLevel, numberOfActionSecondLevel,
-                                                          initLearningRateSecondLevel, initDiscountFactorSecondLevel))
+            SecondLevelAgent.SecondLevelRLAgent(numberOfStateSecondLevel, numberOfActionSecondLevel,
+                                                initLearningRateSecondLevel, initDiscountFactorSecondLevel))
     if int(time) % cycle == 0 and int(time) != tempTime and int(time) > warmup:
         tempTime = int(time)
         for h in range(len(secondLevelAgents)):
@@ -151,7 +151,7 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         tempDensity[2] = e.endNode
                         tempDensity[3] = e.startNode
                         allSectionDensity.append(tempDensity)
-                density = getMaximumDensity(allSectionDensity)
+                density = SecondLevelAgent.getMaxDensity(allSectionDensity)
                 secondLevelAgents[h].currentState = getStateSecondLevel(density[0])
                 # Action selection second level
                 secondLevelAgents[h].currentAction = actionSelectionSecondLevel(h, secondLevelAgents[h].currentState)
