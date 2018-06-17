@@ -1,6 +1,6 @@
 from AAPI import *
-from ReinforcementLearningPack import QLearning, GetState, GetReward, CreateDataSet
-from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection
+from ReinforcementLearningPack import QLearning, GetState, CreateDataSet
+from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection, GetReward
 
 # Global Variables
 warmup = 1800
@@ -186,21 +186,30 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                     ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
                     ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
                 # Get reward second level
-                [rewardSecondLevel, secondLevelAgents[h].oldDta] = getRewardSecondLevel(dta, secondLevelAgents[h].oldDta)
+                [rewardSecondLevel, secondLevelAgents[h].oldDta] = GetReward.getRewardSecondLevel(dta,
+                                                                                                  secondLevelAgents[
+                                                                                                      h].oldDta)
+                # Get reward first level and update Q-Table
                 for key in holonsMap[h]:
-                    if (secondLevelAgents[h].currentAction == 3 or secondLevelAgents[h].currentAction == 5) and (agents[key].id == density[3]):
+                    if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
                         if agents[key].id == 536:
                             AKIPrintString("Forced Action")
                         agents[key].state = agents[key].currentState
                         agents[key].action = agents[key].currentAction
                     else:
-                        [reward, agents[key].oldDta] = GetReward.getReward(agents[key].idSectionIn, agents[key].oldDta)
+                        delayTime = [0] * 4
+                        for i in range(4):
+                            statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                            if statisticalInfo.report == 0:
+                                delayTime[i] = statisticalInfo.DTa
+                        [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
                         reward = (0.7 * reward) + (0.3 * rewardSecondLevel)
                         # Update Q-table
-                        agents[key].qTable[agents[key].state][agents[key].action] += \
-                            agents[key].learningRate * (reward + (
-                            agents[key].discountFactor * agents[key].qTable[agents[key].currentState][
-                                agents[key].currentAction]) - agents[key].qTable[agents[key].state][agents[key].action])
+                        agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
+                            agents[key].qTable[agents[key].state][agents[key].action],
+                            agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
+                            agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
+                            agents[key].learningRate, agents[key].discountFactor)
                         if agents[key].learningRate >= 0.01:
                             agents[key].learningRate -= decayLearningRate
                         if agents[key].discountFactor <= 0.8:
@@ -213,27 +222,29 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                                            " reward : " + str(reward))
                         agents[key].state = agents[key].currentState
                         agents[key].action = agents[key].currentAction
-
-                secondLevelAgents[h].qTable[secondLevelAgents[h].state][secondLevelAgents[h].pre_action] \
-                    += secondLevelAgents[h].learningRate * (rewardSecondLevel + (secondLevelAgents[h].discountFactor *
-                                                                        secondLevelAgents[h].
-                                                                        qTable[secondLevelAgents[h].
-                                                                        currentState][secondLevelAgents[h].action])
-                                                  - secondLevelAgents[h].qTable[secondLevelAgents[h].
-                                                  state][secondLevelAgents[h].pre_action])
+                # Update Q-Table
+                secondLevelAgents[h].qTable[secondLevelAgents[h].state][
+                    secondLevelAgents[h].action] = QLearning.updateQTable(
+                    secondLevelAgents[h].qTable[secondLevelAgents[h].state][secondLevelAgents[h].action],
+                    secondLevelAgents[h].qTable[currentState][currentAction], secondLevelAgents[h].state,
+                    secondLevelAgents[h].action, currentState, currentAction, rewardSecondLevel,
+                    secondLevelAgents[h].learningRate, secondLevelAgents[h].discountFactor)
                 if secondLevelAgents[h].learningRate >= 0.01:
-                    secondLevelAgents[h].learningRate -= decay_learningRate_h
+                    secondLevelAgents[h].learningRate -= decayLearningRateSecondLevel
                 if secondLevelAgents[h].discountFactor <= 0.8:
-                    secondLevelAgents[h].discountFactor += decay_discountFactor_h
-                if h == 3:
-                    AKIPrintString("[secondLevelAgents 0]from " + str(secondLevelAgents[h].state) + " to " +
-                                   str(secondLevelAgents[h].currentState) + " with action " +
-                                   str(secondLevelAgents[h].action) + " reward : " + str(rewardSecondLevel))
-                secondLevelAgents[h].state = secondLevelAgents[h].currentState
+                    secondLevelAgents[h].discountFactor += incrementDiscountFactorSecondLevel
+                secondLevelAgents[h].state = currentState
+                secondLevelAgents[h].action = currentAction
             else:
                 for key in holonsMap[h]:
-                    agents[key].currentState = get_state(agents[key].idSectionIn)
-                    agents[key].pre_action = agents[key].action
+                    # Get State
+                    longQueueInSection = [0] * 4
+                    for i in range(4):
+                        statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                        if statisticalInfo.report == 0:
+                            longQueueInSection[i] = statisticalInfo.LongQueueMax
+                    agents[key].currentState = GetState.getState(longQueueInSection)
+
                     density = [0, 0, 0, 0]
                     agents[key].action = \
                         action_selection_sub_holon(key, density[1], density[2], density[3], 0)
