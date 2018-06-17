@@ -1,6 +1,6 @@
 from AAPI import *
-from ReinforcementLearningPack import QLearning, GetState, ActionSelection, GetReward, CreateDataSet
-from SecondLevelRL import CreateHolon, SecondLevelAgent
+from ReinforcementLearningPack import QLearning, GetState, GetReward, CreateDataSet
+from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelectionSecondLevel, ActionSelectionFirstLevel
 
 # Global Variables
 warmup = 1800
@@ -152,13 +152,16 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         tempDensity[3] = e.startNode
                         allSectionDensity.append(tempDensity)
                 density = SecondLevelAgent.getMaxDensity(allSectionDensity)
-                secondLevelAgents[h].currentState = getStateSecondLevel(density[0])
+                currentState = SecondLevelAgent.getStateSuperHolon(density[0])
                 # Action selection second level
-                secondLevelAgents[h].currentAction = actionSelectionSecondLevel(h, secondLevelAgents[h].currentState)
-                # AKIPrintString(str(secondLevelAgents[h].action))
+                [currentAction, actionType] = ActionSelectionSecondLevel.actionSelectionSecondLevel(
+                    secondLevelAgents[h].probabilityOfRandomAction[currentState],
+                    secondLevelAgents[h].qTable[currentState], numberOfActionSecondLevel)
+                if secondLevelAgents[h].probabilityOfRandomAction[currentState] >= eGreedy and actionType == "random":
+                    secondLevelAgents[h].probabilityOfRandomAction[currentState] -= decayProbabilitySecondLevel
+                # Action selection first level
                 for key in holonsMap[h]:
-                    if (secondLevelAgents[h].currentAction == 3 or secondLevelAgents[h].currentAction == 5) \
-                            and (agents[key].id == density[3]):
+                    if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
                         if density[1] in networkDetails[density[3]][0]:
                             do_action(agents[key].id, timeSta, 19)
                         elif density[1] in networkDetails[density[3]][1]:
@@ -168,10 +171,13 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         else:
                             do_action(agents[key].id, timeSta, 22)
                     else:
-                        agents[key].action = agents[key].currentAction
-                        agents[key].currentAction = \
-                            ActionSelection.actionSelection(key, density[1], density[2], density[3],
-                                                            secondLevelAgents[h].currentAction)
+                        [agents[key].currentAction, actionType] = ActionSelectionFirstLevel.actionSelectionFirstLevel(
+                            numberOfAction, agents[key].probabilityOfRandomAction,
+                            agents[key].qTable[agents[key].currentState], key, density[1], density[2], density[3],
+                            currentAction, networkDetails)
+                        if agents[key].probabilityOfRandomAction[
+                            agents[key].currentState] >= eGreedy and actionType == "random":
+                            agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
                         do_action(agents[key].id, timeSta, agents[key].currentAction)
                 [rewardSecondLevel, secondLevelAgents[h].oldDta] = getRewardSecondLevel(dta, secondLevelAgents[h].oldDta)
                 for key in holonsMap[h]:
