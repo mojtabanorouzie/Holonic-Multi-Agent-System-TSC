@@ -182,10 +182,10 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                             agents[key].currentState] >= eGreedy and actionType == "random":
                             agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
                     # Set green time for each phase
-                    ECIChangeTimingPhase(agents[index].id, 1, phaseDuration[0], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 3, phaseDuration[1], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
                 # Get reward second level
                 [rewardSecondLevel, secondLevelAgents[h].oldDta] = GetReward.getRewardSecondLevel(dta,
                                                                                                   secondLevelAgents[
@@ -253,10 +253,10 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         agents[key].currentState] >= eGreedy and actionType == "random":
                         agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
                     # Set green time for each phase
-                    ECIChangeTimingPhase(agents[index].id, 1, phaseDuration[0], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 3, phaseDuration[1], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
-                    ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
+                    ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
                     # Get reward
                     delayTime = [0] * 4
                     for i in range(4):
