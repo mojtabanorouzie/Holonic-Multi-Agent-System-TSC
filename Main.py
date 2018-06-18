@@ -1,5 +1,5 @@
 from AAPI import *
-from ReinforcementLearningPack import QLearning, GetState, CreateDataSet
+from ReinforcementLearningPack import QLearning, GetState, ActionSelection
 from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection, GetReward
 
 # Global Variables
@@ -119,6 +119,7 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
     if int(time) % cycle == 0 and int(time) != tempTime and int(time) > warmup:
         tempTime = int(time)
         for h in range(len(secondLevelAgents)):
+            # Check number of node in the current holon
             if len(holonsMap[h]) > 1:
                 # Get state first level
                 for key in holonsMap[h]:
@@ -244,89 +245,37 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         if statisticalInfo.report == 0:
                             longQueueInSection[i] = statisticalInfo.LongQueueMax
                     agents[key].currentState = GetState.getState(longQueueInSection)
-
-                    density = [0, 0, 0, 0]
-                    agents[key].action = \
-                        action_selection_sub_holon(key, density[1], density[2], density[3], 0)
-                    do_action(agents[key].id, timeSta, agents[key].action)
-                    [reward, agents[key].old_dta] = \
-                        get_reward_sub_holon(agents[key].idSectionIn, agents[key].old_dta)
-                    # Update Q-table
-                    agents[key].qTable[agents[key].state][agents[key].pre_action] += \
-                        agents[key].learningRate * (reward + (agents[key].discountFactor *
-                                                           agents[key].qTable[agents[key].
-                                                           currentState][agents[key].action]) -
-                                                 agents[key].
-                                                 qTable[agents[key].state][agents[key].pre_action])
+                    # Action selection
+                    [agents[key].currentAction, phaseDuration, actionType] = ActionSelection.actionSelection(
+                        agents[key].probabilityOfRandomAction[agents[key].currentState],
+                        agents[key].qTable[agents[key.currentState]], numberOfAction)
+                    if agents[key].probabilityOfRandomAction[
+                        agents[key].currentState] >= eGreedy and actionType == "random":
+                        agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
+                    # Set green time for each phase
+                    ECIChangeTimingPhase(agents[index].id, 1, phaseDuration[0], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 3, phaseDuration[1], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
+                    ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
+                    # Get reward
+                    delayTime = [0] * 4
+                    for i in range(4):
+                        statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                        if statisticalInfo.report == 0:
+                            delayTime[i] = statisticalInfo.DTa
+                    [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
+                    # Update Q-value
+                    agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
+                        agents[key].qTable[agents[key].state][agents[key].action],
+                        agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
+                        agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
+                        agents[key].learningRate, agents[key].discountFactor)
                     if agents[key].learningRate >= 0.01:
-                        agents[key].learningRate -= decay_learningRate
+                        agents[key].learningRate -= decayLearningRate
                     if agents[key].discountFactor <= 0.8:
-                        agents[key].discountFactor += decay_discountFactor
-                    if agents[key].id == 536:
-                        AKIPrintString("from " +
-                                       str(agents[key].state) + " to " + str(agents[key].currentState) +
-                                       " with action " + str(agents[key].action) + " reward : " + str(reward))
+                        agents[key].discountFactor += incrementDiscountFactor
                     agents[key].state = agents[key].currentState
-
-
-        ################################################################################################################
-        numberOfJunctions = AKIInfNetNbJunctions()
-        for index in xrange(numberOfJunctions):
-            # 1. Get feature from network (Long Queue, Delay Time and Density)
-            longQueueInSection = [0] * 4
-            delayTime = [0] * 4
-            density = [0] * 4
-            if AKIIsGatheringStatistics() >= 0:
-                for i in range(4):
-                    statisticalInfo = AKIEstGetParcialStatisticsSection(agents[index].idSectionIn[i], 100, 0)
-                    if statisticalInfo.report == 0:
-                        longQueueInSection[i] = statisticalInfo.LongQueueMax
-                        delayTime[i] = statisticalInfo.DTa
-                        density[i] = statisticalInfo.Density
-                    else:
-                        longQueueInSection[i] = 0
-                        delayTime[i] = 0
-                        density[i] = 0
-            else:
-                AKIPrintString("Warning AKIIsGatheringStatistics")
-            # 2. Get State
-            currentState = GetState.getState(longQueueInSection)
-            # 3.1 Action Selection
-            [currentAction, phaseDuration, actionType] = ActionSelection.actionSelection(
-                agents[index].probabilityOfRandomAction[currentState], agents[index].qTable[currentState],
-                numberOfAction)
-            if agents[index].probabilityOfRandomAction[currentState] >= eGreedy and actionType == "random":
-                agents[index].probabilityOfRandomAction[currentState] -= decayProbability
-            # 3.2 Set green time for each phase
-            ECIChangeTimingPhase(agents[index].id, 1, phaseDuration[0], timeSta)
-            ECIChangeTimingPhase(agents[index].id, 3, phaseDuration[1], timeSta)
-            ECIChangeTimingPhase(agents[index].id, 5, phaseDuration[2], timeSta)
-            ECIChangeTimingPhase(agents[index].id, 7, phaseDuration[3], timeSta)
-            # 4. Get Reward
-            [reward, agents[index].oldDta] = GetReward.getReward(agents[index].oldDta, delayTime)
-            # 5 .Create dataset of agent experience
-            if createDataSet and actionType == "best" and CreateDataSet.check_convergence(
-                    agents[index].counter[agents[index].state], reward):
-                CreateDataSet.create_dataset(agents[index].state, agents[index].action, delayTime, density,
-                                             longQueueInSection)
-            # 6. Update Q-Table
-            agents[index].qTable[agents[index].state][agents[index].action] = QLearning.updateQTable(
-                agents[index].qTable[agents[index].state][agents[index].action],
-                agents[index].qTable[currentState][currentAction], agents[index].state, agents[index].action,
-                currentState, currentAction, reward, agents[index].learningRate, agents[index].discountFactor)
-            # 7. Update learning rate and discount factor
-            if agents[index].learningRate >= 0.01:
-                agents[index].learningRate -= decayLearningRate
-            if agents[index].discountFactor <= 0.9:
-                agents[index].discountFactor += incrementDiscountFactor
-            if agents[index].id == 549:
-                AKIPrintString(
-                    "from " + str(agents[index].state) + " to " + str(currentState) + " | with action " + str(
-                        agents[index].action) + " | reward : " + str(reward) + " | action type : " + str(actionType))
-            # 8. Set new state and action
-            agents[index].counter[agents[index].state] += 1
-            agents[index].state = currentState
-            agents[index].action = currentAction
+                    agents[key].action = agents[key].currentAction
     return 0
 
 
