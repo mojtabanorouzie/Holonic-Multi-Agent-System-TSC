@@ -184,6 +184,9 @@ def createHolon(graphNodes, graphEdges):
         h = Holon()
         h.insertMember(n)
         holons.append(h)
+    for h in holons:
+        for i in h.edgeMember:
+            del tempGraphEdges[i.id1]
     # AKIPrintString(str(tempGraphEdges))
     # for h in holons:
     #     for i in h.edgeMember:
@@ -192,4 +195,4 @@ def createHolon(graphNodes, graphEdges):
     # h = Holon()
     # h.edgeMember = tempGraphEdges
     # holons.append(h)
-    return holons
+    return [holons, tempGraphEdges]

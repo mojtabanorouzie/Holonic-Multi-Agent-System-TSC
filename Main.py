@@ -2,10 +2,15 @@ from AAPI import *
 from ReinforcementLearningPack import QLearning, GetState, ActionSelection
 from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection, GetReward
 
-# Global Variables
+# 1.1 Global Variables
 warmup = 1800
 cycle = 100
 eGreedy = 0.01
+tempTime = -1
+createDataSet = False
+jamDensity = 200
+
+# 1.2 First level agent global variables
 initLearningRate = 0.5
 initDiscountFactor = 0.5
 decayProbability = 0.02
@@ -13,11 +18,11 @@ decayLearningRate = 0.005
 incrementDiscountFactor = 0.005
 numberOfState = 24
 numberOfAction = 19
-tempTime = -1
 agents = {}
-createDataSet = False
 
-# Second level agent global variables
+# 1.3 Second level agent global variables
+dynamicHolonThreshold = 0.7
+dynamicHolonEnable = False
 numberOfActionSecondLevel = 5
 numberOfStateSecondLevel = 5
 decayProbabilitySecondLevel = 0.066
@@ -30,9 +35,10 @@ nodes = None
 edges = None
 holonsMap = {}
 edgesMap = {}
+otherEdge = {}
 secondLevelAgents = []
 
-# Network details
+# 1.4 Network details
 networkDetails = {536: [[267, 266], [268, 270], [280, 278], [277, 276]],
                   549: [[270, 268], [282, 284], [372, 370], [322, 324]],
                   562: [[282, 284], [396, 394], [294, 296], [410, 290]],
@@ -58,10 +64,11 @@ def AAPILoad():
 
 def AAPIInit():
     AKIPrintString("Init")
+    # 2.1 Number of agents in first level
     numberOfJunctions = AKIInfNetNbJunctions()
     global agents
     for index in range(numberOfJunctions):
-        # Get attribute of network
+        # 2.2 Get attribute of network
         junctionId = AKIInfNetGetJunctionId(index)
         junctionIdSectionIn = []
         junctionIdSectionOut = []
@@ -77,7 +84,7 @@ def AAPIInit():
         junctionIdSectionOut = list(set(junctionIdSectionOut))
         controlType = ECIGetControlType(junctionId)
         numOfPhases = ECIGetNumberPhases(junctionId)
-        # Initial Agent
+        # 2.2 Initial Agent
         agents[AKIInfNetGetJunctionId(index)] = QLearning.ReinforcementLearningAgent(junctionId, junctionIdSectionIn,
                                                                                      junctionIdSectionOut, controlType,
                                                                                      numOfPhases, numberOfAction,
@@ -91,18 +98,19 @@ def AAPIManage(time, timeSta, timTrans, SimStep):
 
 
 def AAPIPostManage(time, timeSta, timTrans, SimStep):
-    global agents, nodes, edges, tempTime, flag, secondLevelAgents
+    global agents, nodes, edges, tempTime, flag, secondLevelAgents, otherEdge
     if time == 0.75:
-        # 1. Create first graph from network
+        # 3.1 Create first graph from network
         [nodes, edges] = CreateHolon.createFirstGraph(agents)
     if int(time) % cycle == 0 and int(time) != tempTime and int(time) > warmup and flag:
         tempTime = int(time)
         flag = False
         tempEdges = edges.copy()
-        # 2. Create final graph
+        tempNodes = list(nodes)
+        # 3.2 Create final graph
         tempEdges = CreateHolon.createSecondGraph(tempEdges)
-        # 3. Create holons
-        holons = CreateHolon.createHolon(nodes, tempEdges)
+        # 3.3 Create holons
+        [holons, otherEdge] = CreateHolon.createHolon(tempNodes, tempEdges)
         for i in range(len(holons)):
             holonsMap[i] = []
             edgesMap[i] = []
@@ -112,16 +120,30 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                 edgesMap[i].append(j)
         for index in range(len(holons)):
             AKIPrintString("holon [" + str(index) + "]  =  " + str(holonsMap[index]))
-        # 4. Create second level agents
-        secondLevelAgents.append(
-            SecondLevelAgent.SecondLevelRLAgent(numberOfStateSecondLevel, numberOfActionSecondLevel,
-                                                initLearningRateSecondLevel, initDiscountFactorSecondLevel))
+        # 3.4 Create second level agents
+            secondLevelAgents.append(
+                SecondLevelAgent.SecondLevelRLAgent(numberOfStateSecondLevel, numberOfActionSecondLevel,
+                                                    initLearningRateSecondLevel, initDiscountFactorSecondLevel))
     if int(time) % cycle == 0 and int(time) != tempTime and int(time) > warmup:
         tempTime = int(time)
+        changeFlagCreateNewHolon = False
+        if dynamicHolonEnable:
+            for edge in otherEdge:
+                statisticalInfo = AKIEstGetParcialStatisticsSection(otherEdge[edge].id1, 100, 0)
+                # AKIPrintString(str(statisticalInfo.Density / jamDensity))
+                if statisticalInfo.report == 0 and statisticalInfo.Density / jamDensity > dynamicHolonThreshold:
+                    changeFlagCreateNewHolon = True
+                if otherEdge[edge].id2:
+                    statisticalInfo = AKIEstGetParcialStatisticsSection(otherEdge[edge].id2, 100, 0)
+                    # AKIPrintString(str(statisticalInfo.Density / jamDensity))
+                    if statisticalInfo.report == 0 and statisticalInfo.Density / jamDensity > dynamicHolonThreshold:
+                        changeFlagCreateNewHolon = True
         for h in range(len(secondLevelAgents)):
             # Check number of node in the current holon
             if len(holonsMap[h]) > 1:
                 # Get state first level
+                if h == 0:
+                    AKIPrintString("########################################")
                 for key in holonsMap[h]:
                     longQueueInSection = [0] * 4
                     for i in range(4):
@@ -138,7 +160,7 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                     statisticalInfo = AKIEstGetParcialStatisticsSection(e.id1, 100, 0)
                     if statisticalInfo.report == 0:
                         dta.append(statisticalInfo.DTa)
-                        tempDensity[0] = statisticalInfo.Density / 200
+                        tempDensity[0] = statisticalInfo.Density / jamDensity
                         tempDensity[1] = e.id1
                         tempDensity[2] = e.startNode
                         tempDensity[3] = e.endNode
@@ -146,7 +168,7 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                     tempDensity = [0, 0, 0, 0]
                     statisticalInfo = AKIEstGetParcialStatisticsSection(e.id2, 100, 0)
                     if statisticalInfo.report == 0:
-                        tempDensity[0] = statisticalInfo.Density / 200
+                        tempDensity[0] = statisticalInfo.Density / jamDensity
                         dta.append(statisticalInfo.DTa)
                         tempDensity[1] = e.id2
                         tempDensity[2] = e.endNode
@@ -234,6 +256,10 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                     secondLevelAgents[h].learningRate -= decayLearningRateSecondLevel
                 if secondLevelAgents[h].discountFactor <= 0.8:
                     secondLevelAgents[h].discountFactor += incrementDiscountFactorSecondLevel
+                if h == 0:
+                    AKIPrintString("[high_level_agents 0]from " + str(secondLevelAgents[h].state) + " to " +
+                                   str(currentState) + " with action " +
+                                   str(secondLevelAgents[h].action) + " reward : " + str(rewardSecondLevel))
                 secondLevelAgents[h].state = currentState
                 secondLevelAgents[h].action = currentAction
             else:
@@ -276,6 +302,21 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                         agents[key].discountFactor += incrementDiscountFactor
                     agents[key].state = agents[key].currentState
                     agents[key].action = agents[key].currentAction
+
+        if changeFlagCreateNewHolon:
+            flag = True
+            AKIPrintString("Holons Changed")
+            changeFlagCreateNewHolon = False
+        if int(time) % 3600 == 0:
+            f = open('Q_val.txt', 'w')
+            for h in range(len(secondLevelAgents)):
+                f.write("Agent " + str(h) + "\n")
+                for i in range(numberOfStateSecondLevel):
+                    for j in range(numberOfActionSecondLevel):
+                        f.write(str(secondLevelAgents[h].qTable[i][j]) + "   ")
+                    f.write("\n")
+            f.close()
+        return 0
     return 0
 
 
