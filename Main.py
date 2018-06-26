@@ -1,6 +1,7 @@
 from AAPI import *
 from ReinforcementLearningPack import QLearning, GetState, ActionSelection
-from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelection, GetReward
+from SecondLevelRL import CreateHolon, SecondLevelAgent, ActionSelectionSecondLevel, GetReward
+import threading
 
 # 1.1 Global Variables
 warmup = 1800
@@ -33,7 +34,7 @@ initDiscountFactorSecondLevel = 0.5
 flag = True
 nodes = None
 edges = None
-holonsMap = {}
+nodesMap = {}
 edgesMap = {}
 otherEdge = {}
 secondLevelAgents = []
@@ -55,6 +56,172 @@ networkDetails = {536: [[267, 266], [268, 270], [280, 278], [277, 276]],
                   692: [[427, 429], [443, 445], [439, 441], [437, 435]],
                   705: [[445, 443], [475, 477], [457, 455], [453, 451]],
                   718: [[475, 477], [479, 481], [489, 487], [485, 483]]}
+
+
+def mainProcess(h, timeSta):
+    # Check number of node in the current holon
+    if len(nodesMap[h]) > 1:
+        # Get state first level
+        if h == 0:
+            AKIPrintString("########################################")
+        for key in nodesMap[h]:
+            longQueueInSection = [0] * 4
+            for i in range(4):
+                statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                if statisticalInfo.report == 0:
+                    longQueueInSection[i] = statisticalInfo.LongQueueMax
+            agents[key].currentState = GetState.getState(longQueueInSection)
+        # Get state second level
+        allSectionDensity = []
+        # tempDensity = [0, 0, 0, 0]  # Density  Id  StartNode  EndNode
+        dta = []
+        for e in edgesMap[h]:
+            tempDensity = [0, 0, 0, 0]
+            statisticalInfo = AKIEstGetParcialStatisticsSection(e.id1, 100, 0)
+            if statisticalInfo.report == 0:
+                dta.append(statisticalInfo.DTa)
+                tempDensity[0] = statisticalInfo.Density / jamDensity
+                tempDensity[1] = e.id1
+                tempDensity[2] = e.startNode
+                tempDensity[3] = e.endNode
+                allSectionDensity.append(tempDensity)
+            tempDensity = [0, 0, 0, 0]
+            statisticalInfo = AKIEstGetParcialStatisticsSection(e.id2, 100, 0)
+            if statisticalInfo.report == 0:
+                tempDensity[0] = statisticalInfo.Density / jamDensity
+                dta.append(statisticalInfo.DTa)
+                tempDensity[1] = e.id2
+                tempDensity[2] = e.endNode
+                tempDensity[3] = e.startNode
+                allSectionDensity.append(tempDensity)
+        density = SecondLevelAgent.getMaxDensity(allSectionDensity)
+        currentState = SecondLevelAgent.getStateSuperHolon(density[0])
+        # Action selection second level
+        [currentAction, actionType] = ActionSelectionSecondLevel.actionSelectionSecondLevel(
+            secondLevelAgents[h].probabilityOfRandomAction[currentState],
+            secondLevelAgents[h].qTable[currentState], numberOfActionSecondLevel)
+        if secondLevelAgents[h].probabilityOfRandomAction[currentState] >= eGreedy and actionType == "random":
+            secondLevelAgents[h].probabilityOfRandomAction[currentState] -= decayProbabilitySecondLevel
+        # Action selection first level
+        for key in nodesMap[h]:
+            if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
+                if density[1] in networkDetails[density[3]][0]:
+                    phaseDuration = [53, 13, 13, 13]
+                elif density[1] in networkDetails[density[3]][1]:
+                    phaseDuration = [13, 53, 13, 13]
+                elif density[1] in networkDetails[density[3]][2]:
+                    phaseDuration = [13, 13, 53, 13]
+                else:
+                    phaseDuration = [13, 13, 13, 53]
+            else:
+                [agents[key].currentAction, phaseDuration,
+                 actionType] = ActionSelectionSecondLevel.actionSelectionFirstLevel(numberOfAction, agents[
+                    key].probabilityOfRandomAction, agents[key].qTable[agents[key].currentState], key,
+                                                                         density[1], density[2],
+                                                                         density[3], currentAction,
+                                                                         networkDetails)
+                if agents[key].probabilityOfRandomAction[
+                    agents[key].currentState] >= eGreedy and actionType == "random":
+                    agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
+            # Set green time for each phase
+            ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
+        # Get reward second level
+        [rewardSecondLevel, secondLevelAgents[h].oldDta] = GetReward.getRewardSecondLevel(dta,
+                                                                                          secondLevelAgents[
+                                                                                              h].oldDta)
+        # Get reward first level and update Q-Table
+        for key in nodesMap[h]:
+            if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
+                if agents[key].id == 536:
+                    AKIPrintString("Forced Action")
+                agents[key].state = agents[key].currentState
+                agents[key].action = agents[key].currentAction
+            else:
+                delayTime = [0] * 4
+                for i in range(4):
+                    statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                    if statisticalInfo.report == 0:
+                        delayTime[i] = statisticalInfo.DTa
+                [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
+                reward = (0.7 * reward) + (0.3 * rewardSecondLevel)
+                # Update Q-table
+                agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
+                    agents[key].qTable[agents[key].state][agents[key].action],
+                    agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
+                    agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
+                    agents[key].learningRate, agents[key].discountFactor)
+                if agents[key].learningRate >= 0.01:
+                    agents[key].learningRate -= decayLearningRate
+                if agents[key].discountFactor <= 0.8:
+                    agents[key].discountFactor += incrementDiscountFactor
+                if agents[key].id == 536:
+                    AKIPrintString("[536]:from " +
+                                   str(agents[key].state) + " to " +
+                                   str(agents[key].currentState) +
+                                   " with action " + str(agents[key].currentAction) +
+                                   " reward : " + str(reward))
+                agents[key].state = agents[key].currentState
+                agents[key].action = agents[key].currentAction
+        # Update Q-Table
+        secondLevelAgents[h].qTable[secondLevelAgents[h].state][
+            secondLevelAgents[h].action] = QLearning.updateQTable(
+            secondLevelAgents[h].qTable[secondLevelAgents[h].state][secondLevelAgents[h].action],
+            secondLevelAgents[h].qTable[currentState][currentAction], secondLevelAgents[h].state,
+            secondLevelAgents[h].action, currentState, currentAction, rewardSecondLevel,
+            secondLevelAgents[h].learningRate, secondLevelAgents[h].discountFactor)
+        if secondLevelAgents[h].learningRate >= 0.01:
+            secondLevelAgents[h].learningRate -= decayLearningRateSecondLevel
+        if secondLevelAgents[h].discountFactor <= 0.8:
+            secondLevelAgents[h].discountFactor += incrementDiscountFactorSecondLevel
+        if h == 0:
+            AKIPrintString("[high_level_agents 0]from " + str(secondLevelAgents[h].state) + " to " +
+                           str(currentState) + " with action " +
+                           str(secondLevelAgents[h].action) + " reward : " + str(rewardSecondLevel))
+        secondLevelAgents[h].state = currentState
+        secondLevelAgents[h].action = currentAction
+    else:
+        for key in nodesMap[h]:
+            # Get State
+            longQueueInSection = [0] * 4
+            for i in range(4):
+                statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                if statisticalInfo.report == 0:
+                    longQueueInSection[i] = statisticalInfo.LongQueueMax
+            agents[key].currentState = GetState.getState(longQueueInSection)
+            # Action selection
+            [agents[key].currentAction, phaseDuration, actionType] = ActionSelection.actionSelection(
+                agents[key].probabilityOfRandomAction[agents[key].currentState],
+                agents[key].qTable[agents[key.currentState]], numberOfAction)
+            if agents[key].probabilityOfRandomAction[
+                agents[key].currentState] >= eGreedy and actionType == "random":
+                agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
+            # Set green time for each phase
+            ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
+            ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
+            # Get reward
+            delayTime = [0] * 4
+            for i in range(4):
+                statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
+                if statisticalInfo.report == 0:
+                    delayTime[i] = statisticalInfo.DTa
+            [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
+            # Update Q-value
+            agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
+                agents[key].qTable[agents[key].state][agents[key].action],
+                agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
+                agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
+                agents[key].learningRate, agents[key].discountFactor)
+            if agents[key].learningRate >= 0.01:
+                agents[key].learningRate -= decayLearningRate
+            if agents[key].discountFactor <= 0.8:
+                agents[key].discountFactor += incrementDiscountFactor
+            agents[key].state = agents[key].currentState
+            agents[key].action = agents[key].currentAction
 
 
 def AAPILoad():
@@ -112,15 +279,23 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
         # 3.3 Create holons
         [holons, otherEdge] = CreateHolon.createHolon(tempNodes, tempEdges)
         for i in range(len(holons)):
-            holonsMap[i] = []
+            nodesMap[i] = []
             edgesMap[i] = []
-            for j in holons[i].members:
-                holonsMap[i].append(j)
+            for j in holons[i].nodeMember:
+                nodesMap[i].append(j)
             for j in holons[i].edgeMember:
                 edgesMap[i].append(j)
         for index in range(len(holons)):
-            AKIPrintString("holon [" + str(index) + "]  =  " + str(holonsMap[index]))
-        # 3.4 Create second level agents
+            AKIPrintString("holon [" + str(index) + "]  =  " + str(nodesMap[index]))
+            AKIPrintString(str(len(edgesMap[index])))
+            for edge in edgesMap[index]:
+                AKIPrintString(str(edge.id1))
+                AKIPrintString(str(edge.id2))
+            # AKIPrintString("holon [" + str(index) + "]  =  ")
+            # for edge in edgesMap[index]:
+            #     AKIPrintString(str(edge.id1))
+            # AKIPrintString("]")
+            # 3.4 Create second level agents
             secondLevelAgents.append(
                 SecondLevelAgent.SecondLevelRLAgent(numberOfStateSecondLevel, numberOfActionSecondLevel,
                                                     initLearningRateSecondLevel, initDiscountFactorSecondLevel))
@@ -138,170 +313,13 @@ def AAPIPostManage(time, timeSta, timTrans, SimStep):
                     # AKIPrintString(str(statisticalInfo.Density / jamDensity))
                     if statisticalInfo.report == 0 and statisticalInfo.Density / jamDensity > dynamicHolonThreshold:
                         changeFlagCreateNewHolon = True
+        threads = []
         for h in range(len(secondLevelAgents)):
-            # Check number of node in the current holon
-            if len(holonsMap[h]) > 1:
-                # Get state first level
-                if h == 0:
-                    AKIPrintString("########################################")
-                for key in holonsMap[h]:
-                    longQueueInSection = [0] * 4
-                    for i in range(4):
-                        statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
-                        if statisticalInfo.report == 0:
-                            longQueueInSection[i] = statisticalInfo.LongQueueMax
-                    agents[key].currentState = GetState.getState(longQueueInSection)
-                # Get state second level
-                allSectionDensity = []
-                # tempDensity = [0, 0, 0, 0]  # Density  Id  StartNode  EndNode
-                dta = []
-                for e in edgesMap[h]:
-                    tempDensity = [0, 0, 0, 0]
-                    statisticalInfo = AKIEstGetParcialStatisticsSection(e.id1, 100, 0)
-                    if statisticalInfo.report == 0:
-                        dta.append(statisticalInfo.DTa)
-                        tempDensity[0] = statisticalInfo.Density / jamDensity
-                        tempDensity[1] = e.id1
-                        tempDensity[2] = e.startNode
-                        tempDensity[3] = e.endNode
-                        allSectionDensity.append(tempDensity)
-                    tempDensity = [0, 0, 0, 0]
-                    statisticalInfo = AKIEstGetParcialStatisticsSection(e.id2, 100, 0)
-                    if statisticalInfo.report == 0:
-                        tempDensity[0] = statisticalInfo.Density / jamDensity
-                        dta.append(statisticalInfo.DTa)
-                        tempDensity[1] = e.id2
-                        tempDensity[2] = e.endNode
-                        tempDensity[3] = e.startNode
-                        allSectionDensity.append(tempDensity)
-                density = SecondLevelAgent.getMaxDensity(allSectionDensity)
-                currentState = SecondLevelAgent.getStateSuperHolon(density[0])
-                # Action selection second level
-                [currentAction, actionType] = ActionSelection.actionSelectionSecondLevel(
-                    secondLevelAgents[h].probabilityOfRandomAction[currentState],
-                    secondLevelAgents[h].qTable[currentState], numberOfActionSecondLevel)
-                if secondLevelAgents[h].probabilityOfRandomAction[currentState] >= eGreedy and actionType == "random":
-                    secondLevelAgents[h].probabilityOfRandomAction[currentState] -= decayProbabilitySecondLevel
-                # Action selection first level
-                for key in holonsMap[h]:
-                    if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
-                        if density[1] in networkDetails[density[3]][0]:
-                            phaseDuration = [53, 13, 13, 13]
-                        elif density[1] in networkDetails[density[3]][1]:
-                            phaseDuration = [13, 53, 13, 13]
-                        elif density[1] in networkDetails[density[3]][2]:
-                            phaseDuration = [13, 13, 53, 13]
-                        else:
-                            phaseDuration = [13, 13, 13, 53]
-                    else:
-                        [agents[key].currentAction, phaseDuration,
-                         actionType] = ActionSelection.actionSelectionFirstLevel(numberOfAction, agents[
-                            key].probabilityOfRandomAction, agents[key].qTable[agents[key].currentState], key,
-                                                                                 density[1], density[2],
-                                                                                 density[3], currentAction,
-                                                                                 networkDetails)
-                        if agents[key].probabilityOfRandomAction[
-                            agents[key].currentState] >= eGreedy and actionType == "random":
-                            agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
-                    # Set green time for each phase
-                    ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
-                # Get reward second level
-                [rewardSecondLevel, secondLevelAgents[h].oldDta] = GetReward.getRewardSecondLevel(dta,
-                                                                                                  secondLevelAgents[
-                                                                                                      h].oldDta)
-                # Get reward first level and update Q-Table
-                for key in holonsMap[h]:
-                    if currentAction == 3 or currentAction == 5 and agents[key].id == density[3]:
-                        if agents[key].id == 536:
-                            AKIPrintString("Forced Action")
-                        agents[key].state = agents[key].currentState
-                        agents[key].action = agents[key].currentAction
-                    else:
-                        delayTime = [0] * 4
-                        for i in range(4):
-                            statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
-                            if statisticalInfo.report == 0:
-                                delayTime[i] = statisticalInfo.DTa
-                        [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
-                        reward = (0.7 * reward) + (0.3 * rewardSecondLevel)
-                        # Update Q-table
-                        agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
-                            agents[key].qTable[agents[key].state][agents[key].action],
-                            agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
-                            agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
-                            agents[key].learningRate, agents[key].discountFactor)
-                        if agents[key].learningRate >= 0.01:
-                            agents[key].learningRate -= decayLearningRate
-                        if agents[key].discountFactor <= 0.8:
-                            agents[key].discountFactor += incrementDiscountFactor
-                        if agents[key].id == 536:
-                            AKIPrintString("[536]:from " +
-                                           str(agents[key].state) + " to " +
-                                           str(agents[key].currentState) +
-                                           " with action " + str(agents[key].currentAction) +
-                                           " reward : " + str(reward))
-                        agents[key].state = agents[key].currentState
-                        agents[key].action = agents[key].currentAction
-                # Update Q-Table
-                secondLevelAgents[h].qTable[secondLevelAgents[h].state][
-                    secondLevelAgents[h].action] = QLearning.updateQTable(
-                    secondLevelAgents[h].qTable[secondLevelAgents[h].state][secondLevelAgents[h].action],
-                    secondLevelAgents[h].qTable[currentState][currentAction], secondLevelAgents[h].state,
-                    secondLevelAgents[h].action, currentState, currentAction, rewardSecondLevel,
-                    secondLevelAgents[h].learningRate, secondLevelAgents[h].discountFactor)
-                if secondLevelAgents[h].learningRate >= 0.01:
-                    secondLevelAgents[h].learningRate -= decayLearningRateSecondLevel
-                if secondLevelAgents[h].discountFactor <= 0.8:
-                    secondLevelAgents[h].discountFactor += incrementDiscountFactorSecondLevel
-                if h == 0:
-                    AKIPrintString("[high_level_agents 0]from " + str(secondLevelAgents[h].state) + " to " +
-                                   str(currentState) + " with action " +
-                                   str(secondLevelAgents[h].action) + " reward : " + str(rewardSecondLevel))
-                secondLevelAgents[h].state = currentState
-                secondLevelAgents[h].action = currentAction
-            else:
-                for key in holonsMap[h]:
-                    # Get State
-                    longQueueInSection = [0] * 4
-                    for i in range(4):
-                        statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
-                        if statisticalInfo.report == 0:
-                            longQueueInSection[i] = statisticalInfo.LongQueueMax
-                    agents[key].currentState = GetState.getState(longQueueInSection)
-                    # Action selection
-                    [agents[key].currentAction, phaseDuration, actionType] = ActionSelection.actionSelection(
-                        agents[key].probabilityOfRandomAction[agents[key].currentState],
-                        agents[key].qTable[agents[key.currentState]], numberOfAction)
-                    if agents[key].probabilityOfRandomAction[
-                        agents[key].currentState] >= eGreedy and actionType == "random":
-                        agents[key].probabilityOfRandomAction[agents[key].currentState] -= decayProbability
-                    # Set green time for each phase
-                    ECIChangeTimingPhase(agents[key].id, 1, phaseDuration[0], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 3, phaseDuration[1], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 5, phaseDuration[2], timeSta)
-                    ECIChangeTimingPhase(agents[key].id, 7, phaseDuration[3], timeSta)
-                    # Get reward
-                    delayTime = [0] * 4
-                    for i in range(4):
-                        statisticalInfo = AKIEstGetParcialStatisticsSection(agents[key].idSectionIn[i], 100, 0)
-                        if statisticalInfo.report == 0:
-                            delayTime[i] = statisticalInfo.DTa
-                    [reward, agents[key].oldDta] = GetReward.getRewardFirstLevel(agents[key].oldDta, delayTime)
-                    # Update Q-value
-                    agents[key].qTable[agents[key].state][agents[key].action] = QLearning.updateQTable(
-                        agents[key].qTable[agents[key].state][agents[key].action],
-                        agents[key].qTable[agents[key].currentState][agents[key].currentAction], agents[key].state,
-                        agents[key].action, agents[key].currentState, agents[key].currentAction, reward,
-                        agents[key].learningRate, agents[key].discountFactor)
-                    if agents[key].learningRate >= 0.01:
-                        agents[key].learningRate -= decayLearningRate
-                    if agents[key].discountFactor <= 0.8:
-                        agents[key].discountFactor += incrementDiscountFactor
-                    agents[key].state = agents[key].currentState
-                    agents[key].action = agents[key].currentAction
+            t = threading.Thread(name='agent' + str(h), target=mainProcess, args=(h, timeSta,))
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
 
         if changeFlagCreateNewHolon:
             flag = True
